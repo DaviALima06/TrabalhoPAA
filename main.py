@@ -49,7 +49,7 @@ def construir_matriz_distancias(coordenadas: List[Tuple[float, float]]) -> List[
 
 
 # ============================================================
-# Solução 
+# Solução (PD no espaço de estados + Dijkstra)
 # ============================================================
 
 def resolver_cvrp_um_caminhao_pd(
