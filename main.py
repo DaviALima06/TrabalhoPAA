@@ -9,13 +9,12 @@ from typing import Dict, List, Optional, Tuple
 
 
 # ============================================================
-# Estruturas de dados (Estado da Programação Dinâmica)
+# 
 # ============================================================
 
 @dataclass(frozen=True)
 class Estado:
     """
-    Estado da PD:
       - mascara: clientes já atendidos (clientes 1..)
       - posicao: posição atual do caminhão (0 = depósito)
       - capacidade_restante: quanto ainda cabe no caminhão (0..C)
@@ -197,7 +196,7 @@ def resolver_cvrp_um_caminhao_pd(
             viagens.append(viagem_atual)
             viagem_atual = [0]
 
-    # Remove viagens vazias (por segurança)
+    # Remove viagens vazias 
     viagens = [v for v in viagens if len(v) > 1]
 
     return melhor_custo_total, viagens
@@ -208,7 +207,7 @@ def resolver_cvrp_um_caminhao_pd(
 # ============================================================
 
 def main() -> None:
-    # Depósito + clientes (coordenadas 2D)
+    # Depósito + clientes 
     coordenadas = [
         (0.0, 0.0),  # 0 = depósito
         (2.0, 1.0),  # 1 = cliente 1
