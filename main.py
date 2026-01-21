@@ -3,32 +3,143 @@ from __future__ import annotations
 
 import math
 import heapq
-from dataclasses import dataclass
+import random
+from dataclasses import dataclass, field
 from itertools import count
 from typing import Dict, List, Optional, Tuple
 
 
 # ============================================================
-# 
+# Definição de Materiais e Pedidos
+# ============================================================
+
+@dataclass(frozen=True)
+class Material:
+    nome: str
+    peso: float
+    volume: float
+
+
+@dataclass(frozen=True)
+class Pedido:
+    """
+    Representa a quantidade de cada material que um cliente pediu
+    - cliente_id: id do cliente
+    - quantidades: dicionário {material_nome: quantidade}
+    """
+    cliente_id: int
+    quantidades: Dict[str, int] = field(default_factory=dict)
+    
+    def peso_total(self, materiais: Dict[str, Material]) -> float:
+        total = 0.0
+        for nome_material, quantidade in self.quantidades.items():
+            if nome_material in materiais:
+                total += materiais[nome_material].peso * quantidade
+        return total
+    
+    def volume_total(self, materiais: Dict[str, Material]) -> float:
+        total = 0.0
+        for nome_material, quantidade in self.quantidades.items():
+            if nome_material in materiais:
+                total += materiais[nome_material].volume * quantidade
+        return total
+
+
+# ============================================================
+# Estado do Problema
 # ============================================================
 
 @dataclass(frozen=True)
 class Estado:
     """
-      - mascara: clientes já atendidos (clientes 1..)
-      - posicao: posição atual do caminhão (0 = depósito)
-      - capacidade_restante: quanto ainda cabe no caminhão (0..C)
+    - mascara: clientes já atendidos (clientes 1..)
+    - posicao: posição atual do caminhão (0 = depósito)
+    - peso_restante: quanto ainda cabe em peso no caminhão
+    - volume_restante: quanto ainda cabe em volume no caminhão
     """
     mascara: int
     posicao: int
-    capacidade_restante: int
+    peso_restante: float
+    volume_restante: float
 
 
 @dataclass
 class InfoPai:
-
     anterior: Optional[Estado]
     acao: Tuple
+
+# Geração de Pedidos Aleatórios
+
+def gerar_materiais() -> Dict[str, Material]:
+    #Cria 5 tipos de materiais de construção com peso e volume
+    return {
+        "areia": Material("areia", peso=1.5, volume=0.8),
+        "cimento": Material("cimento", peso=2.0, volume=0.6),
+        "tijolos": Material("tijolos", peso=3.0, volume=0.4),
+        "madeira": Material("madeira", peso=0.8, volume=1.2),
+        "ferro": Material("ferro", peso=4.0, volume=0.2),
+    }
+
+def gerar_pedidos_aleatorios(
+    numero_clientes: int,
+    materiais: Dict[str, Material],
+    peso_maximo_caminhao: float,
+    volume_maximo_caminhao: float,
+    seed: Optional[int] = None
+) -> Dict[int, Pedido]:
+    """
+    Gera pedidos aleatórios para cada cliente.
+    Os limites por cliente são calculados baseado na capacidade do caminhão.
+    """
+    if seed is not None:
+        random.seed(seed)
+    
+    pedidos: Dict[int, Pedido] = {}
+    nomes_materiais = list(materiais.keys())
+    
+    # Calcula limites por cliente baseado no caminhão
+    peso_maximo_cliente = peso_maximo_caminhao * 0.85
+    volume_maximo_cliente = volume_maximo_caminhao * 0.85
+    
+    for cliente_id in range(1, numero_clientes + 1):
+        quantidades: Dict[str, int] = {}
+        peso_atual = 0.0
+        volume_atual = 0.0
+        
+        # Seleciona aleatoriamente 1-5 tipos de materiais diferentes para este cliente
+        num_tipos_materiais = random.randint(1, 5)
+        materiais_selecionados = random.sample(nomes_materiais, min(num_tipos_materiais, len(nomes_materiais)))
+        
+        # Para cada material selecionado, decide uma quantidade aleatória
+        for material_nome in materiais_selecionados:
+            material = materiais[material_nome]
+            
+            # Calcula a quantidade máxima que cabe baseado em peso e volume
+            max_por_peso = int((peso_maximo_cliente - peso_atual) / material.peso)
+            max_por_volume = int((volume_maximo_cliente - volume_atual) / material.volume)
+            max_quantidade = min(max_por_peso, max_por_volume)
+            
+            if max_quantidade > 0:
+                # Define uma quantidade aleatória entre 1 e o máximo permitido
+                quantidade_selecionada = random.randint(1, max(1, max_quantidade))
+                
+                novo_peso = peso_atual + material.peso * quantidade_selecionada
+                novo_volume = volume_atual + material.volume * quantidade_selecionada
+                
+                # Só adiciona se couber dentro dos limites
+                if novo_peso <= peso_maximo_cliente and novo_volume <= volume_maximo_cliente:
+                    quantidades[material_nome] = quantidade_selecionada
+                    peso_atual = novo_peso
+                    volume_atual = novo_volume
+        
+        # Garante que o cliente tenha pelo menos algo para pedir
+        if not quantidades:
+            material_mais_leve = min(nomes_materiais, key=lambda x: materiais[x].peso)
+            quantidades[material_mais_leve] = 1
+        
+        pedidos[cliente_id] = Pedido(cliente_id=cliente_id, quantidades=quantidades)
+    
+    return pedidos
 
 
 # ============================================================
@@ -54,23 +165,32 @@ def construir_matriz_distancias(coordenadas: List[Tuple[float, float]]) -> List[
 
 def resolver_cvrp_um_caminhao_pd(
     coordenadas: List[Tuple[float, float]],
-    demandas: List[int],
-    capacidade_maxima: int,
+    pedidos: Dict[int, Pedido],
+    materiais: Dict[str, Material],
+    peso_maximo_caminhao: float,
+    volume_maximo_caminhao: float,
     voltar_ao_deposito_no_final: bool = True
 ) -> Tuple[float, List[List[int]]]:
     
-    numero_clientes = len(coordenadas) - 1
+    numero_clientes = len(pedidos)
 
     # Validações
-    if len(demandas) != numero_clientes + 1:
-        raise ValueError("A lista 'demandas' deve ter tamanho n+1 e demandas[0] = 0 (depósito).")
+    if len(coordenadas) != numero_clientes + 1:
+        raise ValueError(f"A lista 'coordenadas' deve ter tamanho {numero_clientes + 1} (depósito + clientes).")
 
-    for j in range(1, numero_clientes + 1):
-        if demandas[j] <= 0:
-            raise ValueError(f"Demanda do cliente {j} deve ser positiva.")
-        if demandas[j] > capacidade_maxima:
+    for cliente_id, pedido in pedidos.items():
+        peso = pedido.peso_total(materiais)
+        volume = pedido.volume_total(materiais)
+        
+        if peso > peso_maximo_caminhao:
             raise ValueError(
-                f"Problema inviável: cliente {j} tem demanda {demandas[j]} maior que a capacidade {capacidade_maxima}."
+                f"Problema inviável: cliente {cliente_id} pediu {peso:.2f}kg "
+                f"(máximo do caminhão: {peso_maximo_caminhao:.2f}kg)"
+            )
+        if volume > volume_maximo_caminhao:
+            raise ValueError(
+                f"Problema inviável: cliente {cliente_id} pediu {volume:.4f}m³ "
+                f"(máximo do caminhão: {volume_maximo_caminhao:.4f}m³)"
             )
 
     distancias = construir_matriz_distancias(coordenadas)
@@ -80,7 +200,12 @@ def resolver_cvrp_um_caminhao_pd(
         return 1 << (cliente - 1)
 
     # Estado inicial: nenhum atendido, no depósito, com capacidade cheia
-    estado_inicial = Estado(mascara=0, posicao=0, capacidade_restante=capacidade_maxima)
+    estado_inicial = Estado(
+        mascara=0, 
+        posicao=0, 
+        peso_restante=peso_maximo_caminhao,
+        volume_restante=volume_maximo_caminhao
+    )
 
     # dp: menor custo conhecido para cada estado
     dp: Dict[Estado, float] = {estado_inicial: 0.0}
@@ -104,13 +229,20 @@ def resolver_cvrp_um_caminhao_pd(
             b = bit_cliente(cliente)
             if estado.mascara & b:
                 continue  # já atendido
-            if demandas[cliente] > estado.capacidade_restante:
-                continue  # não cabe
+            
+            pedido_cliente = pedidos[cliente]
+            peso_pedido = pedido_cliente.peso_total(materiais)
+            volume_pedido = pedido_cliente.volume_total(materiais)
+            
+            # Verifica se cabe em peso e volume
+            if peso_pedido > estado.peso_restante or volume_pedido > estado.volume_restante:
+                continue
 
             novo_estado = Estado(
                 mascara=estado.mascara | b,
                 posicao=cliente,
-                capacidade_restante=estado.capacidade_restante - demandas[cliente]
+                peso_restante=estado.peso_restante - peso_pedido,
+                volume_restante=estado.volume_restante - volume_pedido
             )
             novo_custo = custo_atual + distancias[estado.posicao][cliente]
 
@@ -124,7 +256,8 @@ def resolver_cvrp_um_caminhao_pd(
             novo_estado = Estado(
                 mascara=estado.mascara,
                 posicao=0,
-                capacidade_restante=capacidade_maxima
+                peso_restante=peso_maximo_caminhao,
+                volume_restante=volume_maximo_caminhao
             )
             novo_custo = custo_atual + distancias[estado.posicao][0]
 
@@ -207,30 +340,73 @@ def resolver_cvrp_um_caminhao_pd(
 # ============================================================
 
 def main() -> None:
-    # Depósito + clientes 
+    # Materiais disponíveis
+    materiais = gerar_materiais()
+    
+    # Depósito + clientes
     coordenadas = [
-        (0.0, 0.0),  # 0 = depósito
-        (2.0, 1.0),  # 1 = cliente 1
-        (2.0, 4.0),  # 2 = cliente 2
-        (5.0, 3.0),  # 3 = cliente 3
-        (6.0, 1.0),  # 4 = cliente 4
+        (0.0, 0.0),   # 0 = depósito
+        (2.0, 1.0),   # 1 = cliente 1
+        (2.0, 4.0),   # 2 = cliente 2
+        (5.0, 3.0),   # 3 = cliente 3
+        (6.0, 1.0),   # 4 = cliente 4
     ]
-
-    # demandas[0] = 0 depósito não tem demanda
-    demandas = [0, 2, 3, 4, 2]
-
-    capacidade_maxima = 5
-
-    menor_distancia, viagens = resolver_cvrp_um_caminhao_pd(
-        coordenadas=coordenadas,
-        demandas=demandas,
-        capacidade_maxima=capacidade_maxima,
-        voltar_ao_deposito_no_final=True
+    
+    numero_clientes = len(coordenadas) - 1
+    
+    # Capacidades do caminhão
+    peso_maximo_caminhao = 20 # kg
+    volume_maximo_caminhao = 5 # m³
+    
+    pedidos = gerar_pedidos_aleatorios(
+        numero_clientes=numero_clientes,
+        materiais=materiais,
+        peso_maximo_caminhao=peso_maximo_caminhao,
+        volume_maximo_caminhao=volume_maximo_caminhao,
+        seed=None  # sem seed para ter variabilidade
     )
+    
+    print("PEDIDOS DOS CLIENTES")
+    for cliente_id, pedido in pedidos.items():
+        peso = pedido.peso_total(materiais)
+        volume = pedido.volume_total(materiais)
+        print(f"\nCliente {cliente_id}:")
+        for material_nome, quantidade in pedido.quantidades.items():
+            mat = materiais[material_nome]
+            print(f"{quantidade}x {material_nome:} {quantidade * mat.peso:.2f}kg | {quantidade * mat.volume:.2f}m³")
 
-    print(f"Menor distância total: {menor_distancia:.3f}")
-    for indice, viagem in enumerate(viagens, start=1):
-        print(f"Viagem {indice}: " + " -> ".join(map(str, viagem)))
+        print(f"Total: {peso:.2f}kg | {volume:.2f}m³")
+    
+    # Resolver o problema
+    try:
+        menor_distancia, viagens = resolver_cvrp_um_caminhao_pd(
+            coordenadas=coordenadas,
+            pedidos=pedidos,
+            materiais=materiais,
+            peso_maximo_caminhao=peso_maximo_caminhao,
+            volume_maximo_caminhao=volume_maximo_caminhao,
+            voltar_ao_deposito_no_final=True
+        )
+        
+        print(f"Distância total: {menor_distancia:.3f}")
+        print(f"Número de viagens: {len(viagens)}")
+        
+        for indice, viagem in enumerate(viagens, start=1):
+            print(f"Viagem {indice}: {' -> '.join(map(str, viagem))}")
+            
+            # Calcula peso e volume da viagem
+            peso_viagem = 0.0
+            volume_viagem = 0.0
+            for cliente_id in viagem:
+                if cliente_id != 0:  # ignorar depósito
+                    peso_viagem += pedidos[cliente_id].peso_total(materiais)
+                    volume_viagem += pedidos[cliente_id].volume_total(materiais)
+            
+            print(f"Carga: {peso_viagem:.2f}kg / {peso_maximo_caminhao:.2f}kg")
+            print(f"Volume: {volume_viagem:.2f}m³ / {volume_maximo_caminhao:.2f}m³")
+        
+    except RuntimeError as e:
+        print(f"ERRO: {e}")
 
 
 if __name__ == "__main__":
