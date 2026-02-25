@@ -56,7 +56,7 @@ def construir_matriz_distancias(coordenadas: List[Tuple[float, float]]) -> List[
 
 def gerar_materiais() -> Dict[str, Material]:
     """
-    Materiais em kg e litros 
+    Materiais em kg e litros.
     1 m³ = 1000 litros.
     """
     return {
@@ -68,11 +68,11 @@ def gerar_materiais() -> Dict[str, Material]:
     }
 
 
-def gerar_coordenadas_aleatorias(numero_clientes: int, seed: int = 7) -> List[Tuple[float, float]]:
-    random.seed(seed)
+def gerar_coordenadas_aleatorias(numero_clientes: int) -> List[Tuple[float, float]]:
+   
     coords = [(0.0, 0.0)]  # depósito
     for _ in range(numero_clientes):
-        coords.append((random.uniform(0, 25), random.uniform(0, 25)))  # “km” no plano
+        coords.append((random.uniform(0, 25), random.uniform(0, 25)))
     return coords
 
 
@@ -80,12 +80,12 @@ def gerar_pedidos_aleatorios(
     numero_clientes: int,
     materiais: Dict[str, Material],
     capacidade_peso_kg: int,
-    capacidade_volume_l: int,
-    seed: int = 99
+    capacidade_volume_l: int
 ) -> Dict[int, Pedido]:
-  
-    random.seed(seed)
-
+    """
+    Regras:
+    - Cada cliente <= 1/3 da capacidade do caminhão (peso e volume)
+    """
     limite_peso_cliente = capacidade_peso_kg // 3
     limite_volume_cliente = capacidade_volume_l // 3
 
@@ -97,6 +97,7 @@ def gerar_pedidos_aleatorios(
         peso_atual = 0
         volume_atual = 0
 
+        # alvos (tende a caber 2-3 clientes por viagem)
         alvo_peso = random.randint(250, min(600, limite_peso_cliente))
         alvo_volume = random.randint(200, min(1500, limite_volume_cliente))
 
@@ -106,7 +107,6 @@ def gerar_pedidos_aleatorios(
         for nome in selecionados:
             mat = materiais[nome]
 
-            # quanto ainda dá para colocar sem estourar limites do cliente
             sobra_peso = limite_peso_cliente - peso_atual
             sobra_volume = limite_volume_cliente - volume_atual
 
@@ -117,7 +117,6 @@ def gerar_pedidos_aleatorios(
             if max_qtd <= 0:
                 continue
 
-            # tenta aproximar do alvo, mas sem exagero
             qtd = random.randint(1, max_qtd)
 
             novo_peso = peso_atual + mat.peso_kg * qtd
@@ -128,20 +127,17 @@ def gerar_pedidos_aleatorios(
                 peso_atual = novo_peso
                 volume_atual = novo_volume
 
-            # para quando já chegou próximo do alvo
             if peso_atual >= alvo_peso and volume_atual >= alvo_volume:
                 break
 
         if not quantidades:
-            # garante pedido mínimo
             nome_mais_leve = min(nomes, key=lambda x: materiais[x].peso_kg)
             quantidades[nome_mais_leve] = 1
 
         pedido = Pedido(cliente_id=cid, quantidades=quantidades)
 
-        # valida regra 1/3 (segurança)
+        # segurança: valida regra 1/3
         if pedido.peso_total_kg(materiais) > limite_peso_cliente or pedido.volume_total_l(materiais) > limite_volume_cliente:
-            # reduz para ficar válido
             nome_mais_leve = min(nomes, key=lambda x: materiais[x].peso_kg)
             pedido = Pedido(cliente_id=cid, quantidades={nome_mais_leve: 1})
 
@@ -154,12 +150,8 @@ def gerar_pedidos_aleatorios(
 # TSP exato (Held–Karp) para um subconjunto de clientes
 # ============================================================
 
-def tsp_held_karp( clientes: List[int], dist: List[List[float]] ) -> Tuple[float, List[int]]:
-    """
-    Retorna:
-      - custo do melhor tour 0 -> ...clientes... -> 0
-      - rota [0, ..., 0]
-    """
+def tsp_held_karp(clientes: List[int], dist: List[List[float]]) -> Tuple[float, List[int]]:
+   
     k = len(clientes)
     if k == 0:
         return 0.0, [0, 0]
@@ -167,15 +159,16 @@ def tsp_held_karp( clientes: List[int], dist: List[List[float]] ) -> Tuple[float
         c = clientes[0]
         return dist[0][c] + dist[c][0], [0, c, 0]
 
-    # dp[(mask, i)] = menor custo para sair do depósito e terminar em clientes[i] visitando mask
     dp: Dict[Tuple[int, int], float] = {}
     pai: Dict[Tuple[int, int], Tuple[int, int]] = {}
 
+    # Caso base: visitar um cliente i saindo do depósito
     for i in range(k):
         m = 1 << i
         dp[(m, i)] = dist[0][clientes[i]]
         pai[(m, i)] = (-1, -1)
 
+    # Transições
     for mask in range(1, 1 << k):
         for i in range(k):
             if not (mask & (1 << i)):
@@ -194,6 +187,7 @@ def tsp_held_karp( clientes: List[int], dist: List[List[float]] ) -> Tuple[float
                     dp[chave2] = novo
                     pai[chave2] = (mask, i)
 
+    # Fechamento: voltar ao depósito
     full = (1 << k) - 1
     melhor = float("inf")
     melhor_i = -1
@@ -205,7 +199,7 @@ def tsp_held_karp( clientes: List[int], dist: List[List[float]] ) -> Tuple[float
                 melhor = custo
                 melhor_i = i
 
-    # reconstrução
+    # Reconstrução da ordem
     ordem: List[int] = []
     mask = full
     i = melhor_i
@@ -219,7 +213,7 @@ def tsp_held_karp( clientes: List[int], dist: List[List[float]] ) -> Tuple[float
 
 
 # ============================================================
-# PD exata para CVRP multi-viagens (partição de subconjuntos)
+# PD exata para CVRP multi-viagens 
 # ============================================================
 
 def resolver_cvrp_pd_exata_particao(
@@ -230,51 +224,49 @@ def resolver_cvrp_pd_exata_particao(
     capacidade_volume_l: int,
     minimo_clientes_por_viagem: int = 2
 ) -> Tuple[float, List[List[int]]]:
-   
+  
     n = len(pedidos)
     full_mask = (1 << n) - 1
 
-    # pesos/volumes por cliente (1..n)
+    # Pesos/volumes por cliente (1..n)
     peso = [0] * (n + 1)
     vol = [0] * (n + 1)
     for c in range(1, n + 1):
         peso[c] = pedidos[c].peso_total_kg(materiais)
         vol[c] = pedidos[c].volume_total_l(materiais)
 
-    # regra: cada cliente <= 1/3 da capacidade
+    # Regra: cada cliente <= 1/3
     limite_peso_cliente = capacidade_peso_kg / 3.0
     limite_vol_cliente = capacidade_volume_l / 3.0
     for c in range(1, n + 1):
         if peso[c] > limite_peso_cliente or vol[c] > limite_vol_cliente:
             raise ValueError(
-                f"Cliente {c} viola a regra 1/3: "
-                f"{peso[c]}kg (lim {limite_peso_cliente:.1f}), {vol[c]}L (lim {limite_vol_cliente:.1f})"
+                f"Cliente {c} viola a regra 1/3: {peso[c]}kg (lim {limite_peso_cliente:.1f}), "
+                f"{vol[c]}L (lim {limite_vol_cliente:.1f})"
             )
 
-    # Como cada cliente <= 1/3, no máximo 3 clientes “grandes” cabem. Mesmo assim,
-    #  limite superior realista pelo menor peso/volume.
+    # Limite superior para o tamanho das viagens
     menor_peso = min(peso[1:])
     menor_vol = min(vol[1:])
     max_k_por_peso = max(2, min(6, capacidade_peso_kg // max(1, menor_peso)))
     max_k_por_vol = max(2, min(6, capacidade_volume_l // max(1, menor_vol)))
     max_k = min(max_k_por_peso, max_k_por_vol, 6)
 
-    # Gera subconjuntos viáveis (máscaras) e calcula custo TSP exato
     custo_subset: Dict[int, float] = {}
     rota_subset: Dict[int, List[int]] = {}
 
     clientes_ids = list(range(1, n + 1))
 
+    # Gera todos subconjuntos viáveis com tamanho entre 2 e max_k
     for k in range(minimo_clientes_por_viagem, max_k + 1):
         for comb in combinations(clientes_ids, k):
             peso_total = sum(peso[c] for c in comb)
             vol_total = sum(vol[c] for c in comb)
             if peso_total <= capacidade_peso_kg and vol_total <= capacidade_volume_l:
-                # monta máscara
                 mask = 0
                 for c in comb:
                     mask |= 1 << (c - 1)
-                # TSP exato para este subset
+
                 custo, rota = tsp_held_karp(list(comb), dist)
                 custo_subset[mask] = custo
                 rota_subset[mask] = rota
@@ -285,10 +277,9 @@ def resolver_cvrp_pd_exata_particao(
     # DP de cobertura
     INF = float("inf")
     F = [INF] * (1 << n)
-    pai: List[Optional[Tuple[int, int]]] = [None] * (1 << n)  # (mask_anterior, subset)
+    pai: List[Optional[Tuple[int, int]]] = [None] * (1 << n)  # (mask_anterior, subset_usado)
     F[0] = 0.0
 
-    # lista de subsets para iterar mais rápido
     subsets = list(custo_subset.keys())
 
     for mask in range(1 << n):
@@ -296,7 +287,7 @@ def resolver_cvrp_pd_exata_particao(
             continue
         for sub in subsets:
             if mask & sub:
-                continue  # já tem cliente repetido
+                continue
             novo = mask | sub
             custo_novo = F[mask] + custo_subset[sub]
             if custo_novo < F[novo]:
@@ -305,7 +296,7 @@ def resolver_cvrp_pd_exata_particao(
 
     if F[full_mask] >= INF:
         raise RuntimeError(
-            "Não deu para cobrir todos os clientes com viagens de >=2. "
+            "Não foi possível cobrir todos os clientes com viagens de >=2. "
             "Aumente a capacidade, reduza pedidos ou permita viagem com 1."
         )
 
@@ -353,10 +344,10 @@ def imprimir_relatorio(
     custo_total: float
 ) -> None:
     print("\n" + "=" * 90)
-    print("RELATÓRIO — CVRP (1 caminhão, múltiplas viagens)")
+    print("RELATÓRIO — CVRP (1 caminhão, múltiplas viagens) — PD EXATA")
     print("=" * 90)
     print(f"Capacidade do caminhão: {capacidade_peso_kg} kg (2 toneladas) | {capacidade_volume_l} L")
-    print(f"Velocidade média (para tempo): {velocidade_km_h:.1f} km/h")
+    print(f"Velocidade média (tempo estimado): {velocidade_km_h:.1f} km/h")
     print("-" * 90)
 
     total_dist = 0.0
@@ -399,7 +390,7 @@ def imprimir_relatorio(
     print("-" * 90)
     print(f"Total de viagens: {len(rotas)}")
     print(f"Total de entregas (clientes atendidos): {total_entregas}")
-    print(f"Distância total: {total_dist:.3f} km")
+    print(f"Distância total (recalculada): {total_dist:.3f} km")
     print(f"Distância total (PD): {custo_total:.3f} km")
     print(f"Tempo total estimado: {formatar_tempo(total_tempo)}")
     print(f"Peso total entregue: {total_peso} kg")
@@ -416,19 +407,23 @@ def main() -> None:
 
     # Capacidade pedida: 2 toneladas
     capacidade_peso_kg = 2000
-    capacidade_volume_l = 12000   # 12 m³ = 12000 L (ajuste se quiser)
+    capacidade_volume_l = 12000   # 12 m³ = 12000 L
     velocidade_km_h = 40.0
 
+    # Seed aleatória por execução (para sempre mudar)
+    seed_execucao = random.randrange(1_000_000_000)
+    random.seed(seed_execucao)
+    print(f"\nSeed desta execução (para reproduzir depois): {seed_execucao}")
+
     materiais = gerar_materiais()
-    coordenadas = gerar_coordenadas_aleatorias(numero_clientes, seed=7)
+    coordenadas = gerar_coordenadas_aleatorias(numero_clientes)  # sem seed fixa
     dist = construir_matriz_distancias(coordenadas)
 
     pedidos = gerar_pedidos_aleatorios(
         numero_clientes=numero_clientes,
         materiais=materiais,
         capacidade_peso_kg=capacidade_peso_kg,
-        capacidade_volume_l=capacidade_volume_l,
-        seed=99
+        capacidade_volume_l=capacidade_volume_l
     )
 
     # Mostrar pedidos (resumo)
